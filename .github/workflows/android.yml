@@ -1,5 +1,5 @@
 
-name: Build Taxsee Helper
+name: Build Taxsee Helper APK
 
 on:
   workflow_dispatch:
@@ -18,15 +18,178 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          yes | sdkmanager --licenses || true
 
       - name: Create Android project
         run: |
           mkdir -p app/src/main/java/com/taxsee/helper
           mkdir -p app/src/main/res/values
-          echo "Project setup started"
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "TaxseeHelper"
+          include ':app'
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace 'com.taxsee.helper'
+              compileSdk 35
+              defaultConfig {
+                  applicationId 'com.taxsee.helper'
+                  minSdk 23
+                  targetSdk 35
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <application
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                  android:label="Taxsee Helper"
+                  android:allowBackup="false">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/taxsee/helper/MainActivity.java <<'EOF'
+          package com.taxsee.helper;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.content.Context;
+          import android.content.pm.PackageManager;
+          import android.location.LocationManager;
+          import android.net.ConnectivityManager;
+          import android.net.NetworkCapabilities;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+          import android.widget.Button;
+          import android.graphics.Typeface;
+          import android.view.Gravity;
+
+          public class MainActivity extends Activity {
+              TextView network, gps, info;
+
+              public void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  showDashboard();
+              }
+
+              void showDashboard() {
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(1);
+                  root.setPadding(32, 45, 32, 32);
+                  root.setBackgroundColor(0xFFF3F6FA);
+
+                  TextView title = new TextView(this);
+                  title.setText("TAXSEE HELPER");
+                  title.setTextSize(25);
+                  title.setTypeface(null, Typeface.BOLD);
+                  title.setTextColor(0xFF17365D);
+                  root.addView(title);
+
+                  TextView subtitle = new TextView(this);
+                  subtitle.setText("Dashboard pemantauan Android");
+                  subtitle.setTextSize(14);
+                  root.addView(subtitle);
+
+                  network = addStatus(root, "Koneksi internet");
+                  gps = addStatus(root, "Status GPS");
+                  info = addStatus(root, "Informasi");
+
+                  Button refresh = new Button(this);
+                  refresh.setText("PERBARUI STATUS");
+                  root.addView(refresh);
+                  refresh.setOnClickListener(v -> updateStatus());
+
+                  setContentView(root);
+                  updateStatus();
+              }
+
+              TextView addStatus(LinearLayout root, String label) {
+                  TextView t = new TextView(this);
+                  t.setText(label);
+                  t.setTextSize(17);
+                  t.setPadding(0, 35, 0, 15);
+                  t.setTextColor(0xFF222222);
+                  root.addView(t);
+                  return t;
+              }
+
+              void updateStatus() {
+                  ConnectivityManager cm =
+                      (ConnectivityManager)getSystemService(Context.CONNECTIVITY_SERVICE);
+                  NetworkCapabilities caps = cm.getNetworkCapabilities(cm.getActiveNetwork());
+                  boolean online = caps != null &&
+                      caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+
+                  network.setText("Internet: " + (online ? "Tersedia" : "Tidak terdeteksi"));
+
+                  LocationManager lm =
+                      (LocationManager)getSystemService(Context.LOCATION_SERVICE);
+                  boolean enabled = lm.isProviderEnabled(LocationManager.GPS_PROVIDER);
+                  gps.setText("GPS: " + (enabled ? "Aktif" : "Tidak aktif"));
+
+                  info.setText("Versi: 1.0\nPemantauan dasar siap digunakan.");
+              }
+          }
+          EOF
+
+      - name: Download Gradle
+        run: |
+          curl -L https://services.gradle.org/distributions/gradle-8.7-bin.zip -o gradle.zip
+          unzip -q gradle.zip
 
       - name: Build APK
         run: |
-          echo "Android project source is not yet configured"
+          ./gradle-8.7/bin/gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaxseeHelper-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
